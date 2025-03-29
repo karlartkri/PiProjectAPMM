@@ -1,140 +1,129 @@
 # Pi Zero W Controller
 
-En Python-applikation för att hantera WiFi hotspot och monitor mode på Raspberry Pi Zero W, implementerad med raw sockets för full kontroll över nätverkskommunikationen.
+En robust och pålitlig WiFi-kontroller för Raspberry Pi Zero W som hanterar hotspot och monitor mode utan externa verktyg.
 
 ## Funktioner
 
-- WiFi hotspot utan externa verktyg
-- Monitor mode-stöd
-- Terminal-baserat gränssnitt
-- Detaljerad loggning och felhantering
-- Automatisk felåterställning
-- DHCP-server implementation
-- Raw socket-baserad nätverkskommunikation
+- **Hotspot-hantering**
+  - Skapar en WiFi-hotspot med anpassad SSID och lösenord
+  - Hanterar klientanslutningar och DHCP automatiskt
+  - Kontinuerlig beacon-transmission för stabil anslutning
+
+- **Monitor Mode**
+  - Aktiverar monitor mode för WiFi-analys
+  - Kan köras samtidigt som hotspot
+  - Detaljerad loggning av WiFi-ramar
+
+- **Systemövervakning**
+  - Kontinuerlig övervakning av systemtillstånd
+  - Automatisk återställning vid problem
+  - Övervakning av CPU och minnesanvändning
+
+- **Backup & Återställning**
+  - Automatisk backup av kritiska systemfiler
+  - Backup var 24:e timme
+  - Behåller de 5 senaste backuperna
+  - Enkel återställning från backup
+
+- **Felhantering**
+  - Automatisk återställning vid kritiska fel
+  - Detaljerad loggning av alla fel
+  - Verifiering av systemtillstånd före och efter operationer
 
 ## Systemkrav
 
 - Raspberry Pi Zero W
-- Python 3.x
-- Root-behörighet (sudo)
-- Linux-kernel med raw socket-stöd
-- Nätverksgränssnitt som stödjer monitor mode
+- Python 3.7+
+- Root-behörighet
+- Raw socket-stöd
 
 ## Installation
 
 1. Klona repot:
 ```bash
-git clone https://github.com/yourusername/pi-project.git
-cd pi-project
+git clone https://github.com/yourusername/PiProject.git
+cd PiProject
 ```
 
-2. Installera nödvändiga paket:
+2. Installera beroenden:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Kör applikationen med root-behörighet:
+3. Kör programmet:
 ```bash
 sudo python3 app.py
 ```
 
 ## Användning
 
-Applikationen erbjuder ett terminal-baserat gränssnitt med följande alternativ:
+Programmet startar med en färgkodad terminalmeny:
 
-1. Toggle Hotspot - Starta/stoppa WiFi hotspot
-2. Toggle Monitor Mode - Aktivera/inaktivera monitor mode
-3. Show Log - Visa senaste loggposter
-4. Exit - Stäng av programmet
+1. **Toggle Hotspot** - Startar/stoppar WiFi-hotspot
+2. **Toggle Monitor Mode** - Aktiverar/inaktiverar monitor mode
+3. **Show Log** - Visar senaste loggmeddelanden
+4. **System Backup** - Skapar manuell backup
+5. **Restore System** - Återställer system från backup
+6. **Exit** - Avslutar programmet
 
-## Loggning och Felhantering
+## Loggning
 
-### Loggfiler
+- Alla händelser loggas i `pi_controller.log`
+- Färgkodad loggning i terminalen:
+  - 🔴 ERROR/CRITICAL
+  - 🟡 WARNING
+  - 🟢 INFO
+  - ⚪ Övrigt
 
-Applikationen sparar detaljerade loggar i `pi_controller.log` med följande information:
+## Felhantering
 
-- Tidsstämpel
-- Loggningsnivå (DEBUG, INFO, ERROR, CRITICAL)
-- Fil och radnummer
-- Detaljerat meddelande
-- Stack traces för fel
+Systemet har flera nivåer av felhantering:
 
-### Loggningsnivåer
+1. **Automatisk återställning**
+   - Återställer tjänster vid mindre problem
+   - Verifierar systemtillstånd efter återställning
 
-- **DEBUG**: Detaljerad frame-information, systemtillstånd
-- **INFO**: Normal drift, klientanslutningar
-- **ERROR**: Icke-kritiska fel, återförsök
-- **CRITICAL**: Systemfel, återställningsförsök
+2. **Full systemåterställning**
+   - Återställer från senaste backup vid kritiska fel
+   - Verifierar systemtillstånd efter återställning
 
-### Felåterställning
+3. **Nödåtgärder**
+   - Skapar nödbackup vid kritiska fel
+   - Stoppar tjänster på ett säkert sätt
+   - Återställer nätverksgränssnitt
 
-Systemet inkluderar automatisk felåterställning:
+## Vanliga problem
 
-- Spårar fel inom ett 60-sekunders fönster
-- Startar om tjänster automatiskt efter 5 konsekutiva fel
-- Återställer nätverksgränssnitt vid behov
-- Stängs av snyggt vid kritiska fel
+1. **Hotspot försvinner**
+   - Kontrollera loggfilen för felmeddelanden
+   - Systemet försöker automatiskt återställa
+   - Om problemet kvarstår, återställ från backup
 
-### Vanliga Problem och Lösningar
+2. **Monitor mode fungerar inte**
+   - Verifiera att gränssnittet är tillgängligt
+   - Kontrollera systemloggar
+   - Prova att starta om systemet
 
-1. **AP Försvinner Efter 15 Sekunder**
-   - Kontrollera loggfilen för beacon-transmissionsfel
-   - Verifiera gränssnittskonfigurationen
-   - Övervaka felräkning i loggarna
+3. **Högt CPU/minnesanvändning**
+   - Systemet varnar vid >90% användning
+   - Automatisk återställning vid problem
+   - Kontrollera loggarna för detaljer
 
-2. **Monitor Mode Fungerar Inte**
-   - Kontrollera gränssnittsbehörigheter
-   - Verifiera raw socket-stöd
-   - Granska fel i loggarna
+## Säkerhet
 
-3. **Klientanslutningsproblem**
-   - Kontrollera DHCP-serverloggar
-   - Verifiera beacon-frame-transmission
-   - Övervaka autentisering/association
-
-## Felsökning
-
-### Visa Loggar i Realtid
-
-```bash
-tail -f pi_controller.log
-```
-
-### Kontrollera Systemtillstånd
-
-```bash
-# Kontrollera gränssnittsstatus
-ifconfig wlan0
-
-# Kontrollera systemloggar
-dmesg | grep wlan0
-```
-
-### Vanliga Felmeddelanden
-
-1. **"System requirements not met"**
-   - Verifiera root-behörigheter
-   - Kontrollera raw socket-stöd
-   - Granska kernel-konfiguration
-
-2. **"Failed to configure interface"**
-   - Kontrollera gränssnittsbehörigheter
-   - Verifiera nätverkskonfiguration
-   - Granska systemloggar
-
-3. **"Error threshold reached"**
-   - Kontrollera felmönster i loggarna
-   - Verifiera systemresurser
-   - Granska nätverkskonfiguration
+- Alla kritiska operationer kräver root-behörighet
+- Säker hantering av nätverksgränssnitt
+- Backup av systemfiler innan ändringar
+- Verifiering av systemtillstånd
 
 ## Bidra
 
 1. Forka repot
-2. Skapa din feature-branch
+2. Skapa en feature branch
 3. Commita dina ändringar
 4. Pusha till branchen
-5. Skapa en ny Pull Request
+5. Skapa en Pull Request
 
 ## Licens
 
-Detta projekt är licensierat under MIT-licensen - se LICENSE-filen för detaljer. 
+Detta projekt är licensierat under MIT-licensen - se [LICENSE](LICENSE) för detaljer. 

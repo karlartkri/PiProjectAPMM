@@ -133,6 +133,13 @@ class PiController:
         self.error_threshold = 5
         self.error_window = 60
         self.backup_dir = "system_backups"
+        self.auto_recovery = True  # Aktivera automatisk återställning
+        self.system_check_interval = 30  # Kontrollera systemtillstånd var 30:e sekund
+        self.last_system_check = 0
+        
+        # Starta systemövervakning
+        self.start_system_monitor()
+        
         self.setup_signal_handlers()
         self.check_system_requirements()
         self.create_backup_dir()
@@ -802,6 +809,112 @@ class PiController:
             self.log_error(f"System state verification failed: {str(e)}")
             return False
 
+    def start_system_monitor(self):
+        """Start system monitoring thread"""
+        def monitor():
+            while self.running:
+                try:
+                    current_time = time.time()
+                    if current_time - self.last_system_check >= self.system_check_interval:
+                        self.last_system_check = current_time
+                        
+                        # Kontrollera systemtillstånd
+                        if not self.verify_system_state():
+                            logger.warning("System state check failed, attempting recovery")
+                            self.handle_critical_error()
+                        
+                        # Kontrollera systemresurser
+                        cpu_percent = psutil.cpu_percent()
+                        mem_percent = psutil.virtual_memory().percent
+                        
+                        if cpu_percent > 90 or mem_percent > 90:
+                            logger.warning(f"High resource usage detected - CPU: {cpu_percent}%, Memory: {mem_percent}%")
+                            if self.auto_recovery:
+                                self.handle_critical_error()
+                        
+                        # Kontrollera nätverksgränssnitt
+                        if INTERFACE not in netifaces.interfaces():
+                            logger.warning(f"Interface {INTERFACE} not found, attempting recovery")
+                            if self.auto_recovery:
+                                self.handle_critical_error()
+                        
+                        # Kontrollera processstatus
+                        if not self.check_process_status():
+                            logger.warning("Critical process check failed, attempting recovery")
+                            if self.auto_recovery:
+                                self.handle_critical_error()
+                        
+                        # Skapa automatisk backup om det behövs
+                        if self.should_create_backup():
+                            self.create_system_backup()
+                    
+                    time.sleep(1)  # Kort paus mellan kontroller
+                except Exception as e:
+                    logger.error(f"Error in system monitor: {str(e)}")
+                    time.sleep(5)  # Längre paus vid fel
+
+        thread = threading.Thread(target=monitor, daemon=True)
+        thread.start()
+
+    def check_process_status(self):
+        """Kontrollera status för kritiska processer"""
+        try:
+            # Kontrollera om våra trådar lever
+            if self.hotspot_active and not self.check_thread_status():
+                return False
+            
+            # Kontrollera systemprocesser
+            critical_processes = ['dhcpcd', 'wpa_supplicant']
+            for process in critical_processes:
+                if not self.is_process_running(process):
+                    logger.warning(f"Critical process {process} not running")
+                    return False
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error checking process status: {str(e)}")
+            return False
+
+    def is_process_running(self, process_name):
+        """Kontrollera om en process kör"""
+        try:
+            for proc in psutil.process_iter(['name']):
+                if proc.info['name'] == process_name:
+                    return True
+            return False
+        except Exception:
+            return False
+
+    def check_thread_status(self):
+        """Kontrollera status för våra trådar"""
+        try:
+            for thread in threading.enumerate():
+                if thread.name == "BeaconTransmitter" and not thread.is_alive():
+                    return False
+                if thread.name == "FrameHandler" and not thread.is_alive():
+                    return False
+            return True
+        except Exception:
+            return False
+
+    def should_create_backup(self):
+        """Kontrollera om en backup behövs"""
+        try:
+            # Skapa backup var 24:e timme
+            backup_interval = 24 * 60 * 60  # 24 timmar i sekunder
+            last_backup = 0
+            
+            # Hitta senaste backup-filen
+            backups = [f for f in os.listdir(self.backup_dir) if f.startswith("system_backup_")]
+            if backups:
+                latest_backup = max(backups)
+                timestamp = latest_backup.split('_')[-1].split('.')[0]
+                last_backup = datetime.strptime(timestamp, "%Y%m%d%H%M%S").timestamp()
+            
+            return time.time() - last_backup > backup_interval
+        except Exception:
+            return False
+
     def handle_critical_error(self):
         """Handle critical errors with improved recovery"""
         try:
@@ -833,9 +946,45 @@ class PiController:
             # Create emergency backup
             self.create_system_backup()
             
+            # Restart critical services
+            if self.hotspot_active:
+                self.setup_hotspot()
+            
             logger.info("System recovery completed")
         except Exception as e:
             logger.critical(f"Recovery failed: {str(e)}", exc_info=True)
+            if self.auto_recovery:
+                # Försök en sista gång med full återställning
+                self.full_system_recovery()
+            else:
+                self.cleanup()
+                sys.exit(1)
+
+    def full_system_recovery(self):
+        """Full system recovery with backup restore"""
+        try:
+            logger.info("Attempting full system recovery...")
+            
+            # Hitta senaste fungerande backup
+            backups = sorted([f for f in os.listdir(self.backup_dir) if f.startswith("system_backup_")])
+            if not backups:
+                raise Exception("No backups available for recovery")
+            
+            latest_backup = backups[-1]
+            backup_file = os.path.join(self.backup_dir, latest_backup)
+            
+            # Återställ från backup
+            success, message = self.restore_system_backup(backup_file)
+            if not success:
+                raise Exception(f"Failed to restore from backup: {message}")
+            
+            # Verifiera systemtillstånd
+            if not self.verify_system_state():
+                raise Exception("System state verification failed after full recovery")
+            
+            logger.info("Full system recovery completed successfully")
+        except Exception as e:
+            logger.critical(f"Full recovery failed: {str(e)}", exc_info=True)
             self.cleanup()
             sys.exit(1)
 
