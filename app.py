@@ -124,15 +124,33 @@ class PiController:
         logger.info("PiController initialized successfully")
 
     def check_system_requirements(self):
-        """Check if required system capabilities are available"""
+        """Check system requirements with improved error handling"""
         try:
-            # Check for raw socket support
-            self.raw_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0003))
-            self.raw_socket.close()
+            # Check root privileges
+            if os.geteuid() != 0:
+                raise Exception("Root privileges required")
+
+            # Check interface existence
+            if INTERFACE not in netifaces.interfaces():
+                raise Exception(f"Interface {INTERFACE} not found")
+
+            # Check raw socket support
+            try:
+                sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0003))
+                sock.close()
+            except Exception as e:
+                raise Exception(f"Raw socket support not available: {str(e)}")
+
+            # Check interface capabilities
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            ifreq = struct.pack('16sH', INTERFACE.encode(), 0)
+            flags = struct.unpack('16sH', fcntl.ioctl(sock.fileno(), 0x8913, ifreq))[1]
+            sock.close()
+
+            logger.info("System requirements met")
         except Exception as e:
-            logger.error(f"System requirements not met: {str(e)}")
-            print("Error: System does not support required network capabilities.")
-            sys.exit(1)
+            self.log_error(f"System requirements not met: {str(e)}")
+            raise
 
     def setup_signal_handlers(self):
         """Setup handlers for graceful shutdown"""
@@ -177,7 +195,7 @@ class PiController:
             return False
 
     def configure_interface(self):
-        """Configure network interface for AP mode using raw sockets"""
+        """Configure network interface for AP mode with improved error handling"""
         try:
             # Create raw socket for interface configuration
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -186,9 +204,10 @@ class PiController:
             ifreq = struct.pack('16sH', INTERFACE.encode(), 0)
             flags = struct.unpack('16sH', fcntl.ioctl(sock.fileno(), 0x8913, ifreq))[1]
             
-            # Set interface up
-            ifreq = struct.pack('16sH', INTERFACE.encode(), flags | IFF_UP)
+            # Bring interface down first
+            ifreq = struct.pack('16sH', INTERFACE.encode(), flags & ~IFF_UP)
             fcntl.ioctl(sock.fileno(), 0x8914, ifreq)
+            time.sleep(1)  # Wait for interface to come down
             
             # Configure IP address
             ip = struct.unpack('>I', socket.inet_aton(GATEWAY_IP))[0]
@@ -197,13 +216,33 @@ class PiController:
             ifreq = struct.pack('16sH2I', INTERFACE.encode(), 0, ip, mask)
             fcntl.ioctl(sock.fileno(), 0x8915, ifreq)
             
+            # Bring interface up
+            ifreq = struct.pack('16sH', INTERFACE.encode(), flags | IFF_UP)
+            fcntl.ioctl(sock.fileno(), 0x8914, ifreq)
+            
+            # Wait for interface to come up
+            time.sleep(2)
+            
+            # Verify interface is up
+            ifreq = struct.pack('16sH', INTERFACE.encode(), 0)
+            flags = struct.unpack('16sH', fcntl.ioctl(sock.fileno(), 0x8913, ifreq))[1]
+            if not (flags & IFF_UP):
+                raise Exception("Interface failed to come up")
+            
             sock.close()
             
             # Enable IP forwarding
-            with open('/proc/sys/net/ipv4/ip_forward', 'w') as f:
-                f.write('1')
+            try:
+                with open('/proc/sys/net/ipv4/ip_forward', 'w') as f:
+                    f.write('1')
+            except Exception as e:
+                self.log_error(f"Failed to enable IP forwarding: {str(e)}")
+                # Continue anyway as this is not critical
+                
+            logger.info("Interface configured successfully")
         except Exception as e:
-            raise Exception(f"Failed to configure interface: {str(e)}")
+            self.log_error(f"Failed to configure interface: {str(e)}")
+            raise
 
     def setup_hotspot(self):
         """Configure and start the WiFi hotspot"""
@@ -230,30 +269,83 @@ class PiController:
             return False, f"Error starting hotspot: {str(e)}"
 
     def start_dhcp_server(self):
-        """Start DHCP server thread"""
+        """Start DHCP server thread with improved error handling"""
         def dhcp_server():
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 sock.bind(('0.0.0.0', 67))
+                logger.info("DHCP server started successfully")
                 
                 while self.hotspot_active:
-                    data, addr = sock.recvfrom(1024)
-                    response = self.create_dhcp_response(data)
-                    sock.sendto(response, addr)
+                    try:
+                        data, addr = sock.recvfrom(1024)
+                        if len(data) >= 236:  # Minimum DHCP packet size
+                            response = self.create_dhcp_response(data)
+                            if response:
+                                sock.sendto(response, addr)
+                                logger.debug(f"Sent DHCP response to {addr}")
+                    except socket.timeout:
+                        continue
+                    except Exception as e:
+                        self.log_error(f"DHCP server error: {str(e)}")
+                        time.sleep(0.1)  # Kort paus vid fel
             except Exception as e:
-                logger.error(f"DHCP server error: {str(e)}")
+                self.log_error(f"DHCP server fatal error: {str(e)}")
             finally:
                 sock.close()
+                logger.info("DHCP server stopped")
 
         thread = threading.Thread(target=dhcp_server, daemon=True)
         thread.start()
 
     def create_dhcp_response(self, request):
-        """Create DHCP response packet"""
-        response = bytearray(request[:236])  # Copy header
-        response[0] = 2  # Response type
-        response[236:240] = struct.pack('>I', int(GATEWAY_IP.replace('.', '')))
-        return bytes(response)
+        """Create DHCP response packet with complete configuration"""
+        try:
+            # Kopiera DHCP header
+            response = bytearray(request[:236])
+            
+            # Sätt response type
+            response[0] = 2  # DHCP Offer
+            
+            # Sätt server IP (vår gateway)
+            response[236:240] = struct.pack('>I', int(GATEWAY_IP.replace('.', '')))
+            
+            # Sätt client IP (från DHCP range)
+            client_ip = "192.168.4.2"  # Första IP i range
+            response[244:248] = struct.pack('>I', int(client_ip.replace('.', '')))
+            
+            # Sätt lease time (24 timmar)
+            response[252:256] = struct.pack('>I', 86400)
+            
+            # Lägg till DHCP options
+            options = bytearray()
+            
+            # Subnet mask
+            options.extend([1, 4, 255, 255, 255, 0])
+            
+            # Router (gateway)
+            options.extend([3, 4])
+            options.extend(struct.pack('>I', int(GATEWAY_IP.replace('.', ''))))
+            
+            # DNS server
+            options.extend([6, 4])
+            options.extend(struct.pack('>I', int(GATEWAY_IP.replace('.', ''))))
+            
+            # DHCP server identifier
+            options.extend([54, 4])
+            options.extend(struct.pack('>I', int(GATEWAY_IP.replace('.', ''))))
+            
+            # End marker
+            options.append(255)
+            
+            response.extend(options)
+            
+            logger.debug(f"Created DHCP response for client {client_ip}")
+            return bytes(response)
+        except Exception as e:
+            self.log_error(f"Error creating DHCP response: {str(e)}")
+            return None
 
     def create_beacon_frame(self):
         """Create WiFi beacon frame with complete information"""
@@ -261,9 +353,8 @@ class PiController:
         frame.frame_control = (FRAME_TYPE_MANAGEMENT << 2) | FRAME_SUBTYPE_BEACON
         frame.addr1 = b'\xff' * 6  # Broadcast
         
-        # Konvertera MAC-adressen korrekt
-        mac_str = "00:11:22:33:44:55"
-        mac_bytes = bytes.fromhex(mac_str.replace(':', ''))
+        # Använd en enklare MAC-adress
+        mac_bytes = bytes([0x00, 0x11, 0x22, 0x33, 0x44, 0x55])
         frame.addr2 = mac_bytes  # BSSID
         frame.addr3 = mac_bytes  # BSSID
         frame.seq_ctrl = 0
@@ -307,6 +398,8 @@ class PiController:
         """Start beacon frame transmitter thread with improved error handling"""
         def beacon_transmitter():
             consecutive_errors = 0
+            retry_delay = 0.1  # Start with 100ms delay
+            
             try:
                 self.raw_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0003))
                 self.raw_socket.bind((INTERFACE, 0))
@@ -319,15 +412,22 @@ class PiController:
                             frame = self.create_beacon_frame()
                             self.raw_socket.send(frame.pack())
                             self.last_beacon_time = current_time
-                            consecutive_errors = 0  # Reset error counter on success
+                            consecutive_errors = 0
+                            retry_delay = 0.1  # Reset delay on success
+                            logger.debug("Sent beacon frame successfully")
                         time.sleep(0.01)
                     except Exception as e:
                         consecutive_errors += 1
                         self.log_error(f"Beacon transmission error (attempt {consecutive_errors}): {str(e)}")
+                        
+                        # Exponential backoff
+                        retry_delay = min(retry_delay * 2, 1.0)
+                        time.sleep(retry_delay)
+                        
                         if consecutive_errors >= 3:
                             logger.critical("Too many consecutive beacon errors, restarting transmitter")
+                            self.reset_interface()
                             break
-                        time.sleep(0.1)  # Wait before retry
             except Exception as e:
                 self.log_error(f"Beacon transmitter fatal error: {str(e)}")
             finally:
@@ -427,9 +527,8 @@ class PiController:
         response.frame_control = (FRAME_TYPE_MANAGEMENT << 2) | FRAME_SUBTYPE_PROBE_RESP
         response.addr1 = request.addr2  # Destination is the requester
         
-        # Konvertera MAC-adressen korrekt
-        mac_str = "00:11:22:33:44:55"
-        mac_bytes = bytes.fromhex(mac_str.replace(':', ''))
+        # Använd samma MAC-adress som i beacon
+        mac_bytes = bytes([0x00, 0x11, 0x22, 0x33, 0x44, 0x55])
         response.addr2 = mac_bytes  # Source
         response.addr3 = mac_bytes  # BSSID
         
@@ -629,23 +728,33 @@ class PiController:
             self.handle_critical_error()
 
     def handle_critical_error(self):
-        """Handle critical errors by attempting recovery"""
+        """Handle critical errors with improved recovery"""
         try:
             logger.info("Attempting system recovery...")
             
-            # Stop all services
+            # Stop all services gracefully
             if self.hotspot_active:
                 self.stop_hotspot()
             if self.monitor_mode_active:
                 self.toggle_monitor_mode(False)
             
+            # Wait for services to stop
+            time.sleep(2)
+            
             # Reset interface
             self.reset_interface()
+            
+            # Wait for interface to stabilize
+            time.sleep(2)
             
             # Reset error counters
             self.error_count = 0
             self.last_error_time = 0
             
+            # Verify system state
+            if INTERFACE not in netifaces.interfaces():
+                raise Exception("Interface not found after reset")
+                
             logger.info("System recovery completed")
         except Exception as e:
             logger.critical(f"Recovery failed: {str(e)}", exc_info=True)
@@ -653,7 +762,7 @@ class PiController:
             sys.exit(1)
 
     def reset_interface(self):
-        """Reset network interface to default state"""
+        """Reset network interface with improved error handling"""
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             
@@ -671,10 +780,20 @@ class PiController:
             ifreq = struct.pack('16sH', INTERFACE.encode(), flags | IFF_UP)
             fcntl.ioctl(sock.fileno(), 0x8914, ifreq)
             
+            # Wait for interface to come up
+            time.sleep(2)
+            
+            # Verify interface is up
+            ifreq = struct.pack('16sH', INTERFACE.encode(), 0)
+            flags = struct.unpack('16sH', fcntl.ioctl(sock.fileno(), 0x8913, ifreq))[1]
+            if not (flags & IFF_UP):
+                raise Exception("Interface failed to come up after reset")
+            
             sock.close()
             logger.info("Network interface reset successfully")
         except Exception as e:
             self.log_error(f"Failed to reset interface: {str(e)}")
+            raise
 
     def run(self):
         """Main application loop"""

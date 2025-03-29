@@ -1,139 +1,140 @@
 # Pi Zero W Controller
 
-A Python application for managing WiFi hotspot and monitor mode on Raspberry Pi Zero W, implemented using raw sockets for complete control over network communication.
+En Python-applikation för att hantera WiFi hotspot och monitor mode på Raspberry Pi Zero W, implementerad med raw sockets för full kontroll över nätverkskommunikationen.
 
-## Features
+## Funktioner
 
-- WiFi hotspot creation without external tools
-- Monitor mode support
-- Terminal-based interface
-- Detailed logging and error tracking
-- Automatic error recovery
-- DHCP server implementation
-- Raw socket-based network communication
+- WiFi hotspot utan externa verktyg
+- Monitor mode-stöd
+- Terminal-baserat gränssnitt
+- Detaljerad loggning och felhantering
+- Automatisk felåterställning
+- DHCP-server implementation
+- Raw socket-baserad nätverkskommunikation
 
-## Requirements
+## Systemkrav
 
 - Raspberry Pi Zero W
 - Python 3.x
-- Root privileges (sudo)
-- Linux kernel with raw socket support
+- Root-behörighet (sudo)
+- Linux-kernel med raw socket-stöd
+- Nätverksgränssnitt som stödjer monitor mode
 
 ## Installation
 
-1. Clone the repository:
+1. Klona repot:
 ```bash
 git clone https://github.com/yourusername/pi-project.git
 cd pi-project
 ```
 
-2. Install required packages:
+2. Installera nödvändiga paket:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Run the application with root privileges:
+3. Kör applikationen med root-behörighet:
 ```bash
 sudo python3 app.py
 ```
 
-## Usage
+## Användning
 
-The application provides a terminal-based interface with the following options:
+Applikationen erbjuder ett terminal-baserat gränssnitt med följande alternativ:
 
-1. Toggle Hotspot - Start/stop WiFi hotspot
-2. Toggle Monitor Mode - Enable/disable monitor mode
-3. Show Log - Display recent log entries
-4. Exit - Clean shutdown
+1. Toggle Hotspot - Starta/stoppa WiFi hotspot
+2. Toggle Monitor Mode - Aktivera/inaktivera monitor mode
+3. Show Log - Visa senaste loggposter
+4. Exit - Stäng av programmet
 
-## Logging and Error Handling
+## Loggning och Felhantering
 
-### Log Files
+### Loggfiler
 
-The application maintains detailed logs in `pi_controller.log` with the following information:
+Applikationen sparar detaljerade loggar i `pi_controller.log` med följande information:
 
-- Timestamp
-- Log level (DEBUG, INFO, ERROR, CRITICAL)
-- File and line number
-- Detailed message
-- Stack traces for errors
+- Tidsstämpel
+- Loggningsnivå (DEBUG, INFO, ERROR, CRITICAL)
+- Fil och radnummer
+- Detaljerat meddelande
+- Stack traces för fel
 
-### Log Levels
+### Loggningsnivåer
 
-- **DEBUG**: Detailed frame information, system state
-- **INFO**: Normal operations, client connections
-- **ERROR**: Non-critical errors, retry attempts
-- **CRITICAL**: System failures, recovery attempts
+- **DEBUG**: Detaljerad frame-information, systemtillstånd
+- **INFO**: Normal drift, klientanslutningar
+- **ERROR**: Icke-kritiska fel, återförsök
+- **CRITICAL**: Systemfel, återställningsförsök
 
-### Error Recovery
+### Felåterställning
 
-The system includes automatic error recovery:
+Systemet inkluderar automatisk felåterställning:
 
-- Tracks error frequency within a 60-second window
-- Automatically restarts services after 5 consecutive errors
-- Resets network interface when needed
-- Graceful shutdown on critical failures
+- Spårar fel inom ett 60-sekunders fönster
+- Startar om tjänster automatiskt efter 5 konsekutiva fel
+- Återställer nätverksgränssnitt vid behov
+- Stängs av snyggt vid kritiska fel
 
-### Common Issues and Solutions
+### Vanliga Problem och Lösningar
 
-1. **AP Disappears After 15 Seconds**
-   - Check log file for beacon transmission errors
-   - Verify interface configuration
-   - Monitor error count in logs
+1. **AP Försvinner Efter 15 Sekunder**
+   - Kontrollera loggfilen för beacon-transmissionsfel
+   - Verifiera gränssnittskonfigurationen
+   - Övervaka felräkning i loggarna
 
-2. **Monitor Mode Not Working**
-   - Check interface permissions
-   - Verify raw socket support
-   - Review error logs for specific failures
+2. **Monitor Mode Fungerar Inte**
+   - Kontrollera gränssnittsbehörigheter
+   - Verifiera raw socket-stöd
+   - Granska fel i loggarna
 
-3. **Client Connection Issues**
-   - Check DHCP server logs
-   - Verify beacon frame transmission
-   - Monitor authentication/association frames
+3. **Klientanslutningsproblem**
+   - Kontrollera DHCP-serverloggar
+   - Verifiera beacon-frame-transmission
+   - Övervaka autentisering/association
 
-## Debugging
+## Felsökning
 
-### View Logs in Real-time
+### Visa Loggar i Realtid
 
 ```bash
 tail -f pi_controller.log
 ```
 
-### Check System State
+### Kontrollera Systemtillstånd
 
 ```bash
-# Check interface status
+# Kontrollera gränssnittsstatus
 ifconfig wlan0
 
-# Check system logs
+# Kontrollera systemloggar
 dmesg | grep wlan0
 ```
 
-### Common Error Messages
+### Vanliga Felmeddelanden
 
 1. **"System requirements not met"**
-   - Verify root privileges
-   - Check raw socket support
-   - Review kernel configuration
+   - Verifiera root-behörigheter
+   - Kontrollera raw socket-stöd
+   - Granska kernel-konfiguration
 
 2. **"Failed to configure interface"**
-   - Check interface permissions
-   - Verify network configuration
-   - Review system logs
+   - Kontrollera gränssnittsbehörigheter
+   - Verifiera nätverkskonfiguration
+   - Granska systemloggar
 
 3. **"Error threshold reached"**
-   - Check error logs for pattern
-   - Verify system resources
-   - Review network configuration
+   - Kontrollera felmönster i loggarna
+   - Verifiera systemresurser
+   - Granska nätverkskonfiguration
 
-## Contributing
+## Bidra
 
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a new Pull Request
+1. Forka repot
+2. Skapa din feature-branch
+3. Commita dina ändringar
+4. Pusha till branchen
+5. Skapa en ny Pull Request
 
-## License
+## Licens
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+Detta projekt är licensierat under MIT-licensen - se LICENSE-filen för detaljer. 
