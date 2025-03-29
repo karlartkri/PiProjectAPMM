@@ -12,6 +12,7 @@ import fcntl
 import termios
 import traceback
 from datetime import datetime
+import psutil
 
 # ANSI Color Codes
 RED = '\033[91m'
@@ -129,10 +130,19 @@ class PiController:
         self.last_beacon_time = 0
         self.error_count = 0
         self.last_error_time = 0
-        self.error_threshold = 5  # Max errors before restart
-        self.error_window = 60  # Time window in seconds
+        self.error_threshold = 5
+        self.error_window = 60
+        self.backup_dir = "system_backups"
         self.setup_signal_handlers()
         self.check_system_requirements()
+        self.create_backup_dir()
+        self.create_system_backup()
+        
+        # Verifiera systemtillstånd
+        if not self.verify_system_state():
+            logger.warning("System state verification failed, attempting recovery")
+            self.handle_critical_error()
+        
         logger.info("PiController initialized successfully")
 
     def check_system_requirements(self):
@@ -696,8 +706,10 @@ class PiController:
         print(f"{YELLOW}1.{END} Toggle Hotspot")
         print(f"{YELLOW}2.{END} Toggle Monitor Mode")
         print(f"{YELLOW}3.{END} Show Log")
-        print(f"{YELLOW}4.{END} Exit")
-        print(f"\n{BLUE}Select an option (1-4):{END} ")
+        print(f"{YELLOW}4.{END} System Backup")
+        print(f"{YELLOW}5.{END} Restore System")
+        print(f"{YELLOW}6.{END} Exit")
+        print(f"\n{BLUE}Select an option (1-6):{END} ")
 
     def show_log(self):
         """Display recent log entries with colors"""
@@ -746,6 +758,50 @@ class PiController:
             logger.critical("Error threshold reached, initiating restart")
             self.handle_critical_error()
 
+    def verify_system_state(self):
+        """Verify system state and configuration"""
+        try:
+            # Kontrollera nätverksgränssnitt
+            if INTERFACE not in netifaces.interfaces():
+                raise Exception(f"Interface {INTERFACE} not found")
+            
+            # Kontrollera IP-konfiguration
+            addrs = netifaces.ifaddresses(INTERFACE)
+            if netifaces.AF_INET not in addrs:
+                raise Exception("No IP configuration found")
+            
+            # Kontrollera raw socket-stöd
+            try:
+                sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0003))
+                sock.close()
+            except Exception as e:
+                raise Exception(f"Raw socket support not available: {str(e)}")
+            
+            # Kontrollera systemfiler
+            critical_files = [
+                "/etc/network/interfaces",
+                "/etc/dhcpcd.conf",
+                "/etc/wpa_supplicant/wpa_supplicant.conf",
+                "/etc/hostapd/hostapd.conf",
+                "/etc/dnsmasq.conf"
+            ]
+            
+            for file in critical_files:
+                if not os.path.exists(file):
+                    logger.warning(f"Critical file missing: {file}")
+            
+            # Kontrollera systemresurser
+            if psutil.cpu_percent() > 90:
+                logger.warning("High CPU usage detected")
+            if psutil.virtual_memory().percent > 90:
+                logger.warning("High memory usage detected")
+            
+            logger.info("System state verified successfully")
+            return True
+        except Exception as e:
+            self.log_error(f"System state verification failed: {str(e)}")
+            return False
+
     def handle_critical_error(self):
         """Handle critical errors with improved recovery"""
         try:
@@ -771,9 +827,12 @@ class PiController:
             self.last_error_time = 0
             
             # Verify system state
-            if INTERFACE not in netifaces.interfaces():
-                raise Exception("Interface not found after reset")
-                
+            if not self.verify_system_state():
+                raise Exception("System state verification failed after recovery")
+            
+            # Create emergency backup
+            self.create_system_backup()
+            
             logger.info("System recovery completed")
         except Exception as e:
             logger.critical(f"Recovery failed: {str(e)}", exc_info=True)
@@ -814,39 +873,186 @@ class PiController:
             self.log_error(f"Failed to reset interface: {str(e)}")
             raise
 
+    def create_backup_dir(self):
+        """Create backup directory if it doesn't exist"""
+        try:
+            if not os.path.exists(self.backup_dir):
+                os.makedirs(self.backup_dir)
+                logger.info(f"Created backup directory: {self.backup_dir}")
+        except Exception as e:
+            self.log_error(f"Failed to create backup directory: {str(e)}")
+
+    def create_system_backup(self):
+        """Create a backup of critical system files"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = os.path.join(self.backup_dir, f"system_backup_{timestamp}.tar.gz")
+            
+            # Lista över kritiska filer att säkerhetskopiera
+            critical_files = [
+                "/etc/network/interfaces",
+                "/etc/dhcpcd.conf",
+                "/etc/wpa_supplicant/wpa_supplicant.conf",
+                "/etc/hostapd/hostapd.conf",
+                "/etc/dnsmasq.conf"
+            ]
+            
+            # Skapa temporär katalog för backup
+            temp_dir = os.path.join(self.backup_dir, "temp_backup")
+            if not os.path.exists(temp_dir):
+                os.makedirs(temp_dir)
+            
+            # Kopiera kritiska filer
+            for file in critical_files:
+                if os.path.exists(file):
+                    dest = os.path.join(temp_dir, os.path.basename(file))
+                    with open(file, 'r') as src, open(dest, 'w') as dst:
+                        dst.write(src.read())
+            
+            # Skapa tar-arkiv
+            import tarfile
+            with tarfile.open(backup_file, "w:gz") as tar:
+                tar.add(temp_dir, arcname="")
+            
+            # Städa upp temporär katalog
+            import shutil
+            shutil.rmtree(temp_dir)
+            
+            logger.info(f"Created system backup: {backup_file}")
+            
+            # Behåll bara de 5 senaste backuperna
+            self.cleanup_old_backups()
+            
+        except Exception as e:
+            self.log_error(f"Failed to create system backup: {str(e)}")
+
+    def cleanup_old_backups(self):
+        """Keep only the 5 most recent backups"""
+        try:
+            backups = sorted([f for f in os.listdir(self.backup_dir) if f.startswith("system_backup_")])
+            if len(backups) > 5:
+                for old_backup in backups[:-5]:
+                    os.remove(os.path.join(self.backup_dir, old_backup))
+                    logger.info(f"Removed old backup: {old_backup}")
+        except Exception as e:
+            self.log_error(f"Failed to cleanup old backups: {str(e)}")
+
+    def restore_system_backup(self, backup_file):
+        """Restore system from backup"""
+        try:
+            if not os.path.exists(backup_file):
+                raise Exception(f"Backup file not found: {backup_file}")
+            
+            # Skapa temporär katalog för återställning
+            temp_dir = os.path.join(self.backup_dir, "temp_restore")
+            if not os.path.exists(temp_dir):
+                os.makedirs(temp_dir)
+            
+            # Extrahera backup
+            import tarfile
+            with tarfile.open(backup_file, "r:gz") as tar:
+                tar.extractall(temp_dir)
+            
+            # Återställ filer
+            for file in os.listdir(temp_dir):
+                src = os.path.join(temp_dir, file)
+                dst = os.path.join("/etc", file)
+                
+                # Skapa backup av existerande fil
+                if os.path.exists(dst):
+                    backup_dst = f"{dst}.backup"
+                    with open(dst, 'r') as src_file, open(backup_dst, 'w') as dst_file:
+                        dst_file.write(src_file.read())
+                
+                # Kopiera ny fil
+                with open(src, 'r') as src_file, open(dst, 'w') as dst_file:
+                    dst_file.write(src_file.read())
+            
+            # Städa upp
+            import shutil
+            shutil.rmtree(temp_dir)
+            
+            logger.info(f"System restored from backup: {backup_file}")
+            return True, "System restored successfully"
+            
+        except Exception as e:
+            self.log_error(f"Failed to restore system backup: {str(e)}")
+            return False, f"Failed to restore system: {str(e)}"
+
     def run(self):
-        """Main application loop with colored output"""
+        """Main application loop with improved error handling"""
         try:
             self.check_root()
             while self.running:
-                self.display_menu()
-                choice = input().strip()
-                
-                if choice == '1':
-                    if self.hotspot_active:
-                        success, message = self.stop_hotspot()
+                try:
+                    self.display_menu()
+                    choice = input().strip()
+                    
+                    if choice == '1':
+                        if self.hotspot_active:
+                            success, message = self.stop_hotspot()
+                            print(f"\n{GREEN if success else RED}{message}{END}")
+                        else:
+                            # Verifiera systemtillstånd innan start
+                            if not self.verify_system_state():
+                                print(f"\n{RED}System state verification failed. Attempting recovery...{END}")
+                                self.handle_critical_error()
+                            success, message = self.setup_hotspot()
+                            print(f"\n{GREEN if success else RED}{message}{END}")
+                        time.sleep(2)
+                    
+                    elif choice == '2':
+                        if not self.verify_system_state():
+                            print(f"\n{RED}System state verification failed. Attempting recovery...{END}")
+                            self.handle_critical_error()
+                        success, message = self.toggle_monitor_mode(not self.monitor_mode_active)
                         print(f"\n{GREEN if success else RED}{message}{END}")
+                        time.sleep(2)
+                    
+                    elif choice == '3':
+                        self.show_log()
+                    
+                    elif choice == '4':
+                        self.create_system_backup()
+                        print(f"\n{GREEN}System backup created successfully{END}")
+                        input(f"\n{BLUE}Press Enter to continue...{END}")
+                    
+                    elif choice == '5':
+                        print(f"\n{BOLD}{CYAN}Available Backups:{END}")
+                        backups = sorted([f for f in os.listdir(self.backup_dir) if f.startswith("system_backup_")])
+                        for i, backup in enumerate(backups, 1):
+                            print(f"{YELLOW}{i}.{END} {backup}")
+                        
+                        try:
+                            backup_choice = int(input(f"\n{BLUE}Select backup to restore (1-{len(backups)}):{END} "))
+                            if 1 <= backup_choice <= len(backups):
+                                backup_file = os.path.join(self.backup_dir, backups[backup_choice-1])
+                                success, message = self.restore_system_backup(backup_file)
+                                print(f"\n{GREEN if success else RED}{message}{END}")
+                                
+                                # Verifiera systemtillstånd efter återställning
+                                if success and not self.verify_system_state():
+                                    print(f"\n{RED}System state verification failed after restore. Attempting recovery...{END}")
+                                    self.handle_critical_error()
+                            else:
+                                print(f"\n{RED}Invalid backup selection{END}")
+                        except ValueError:
+                            print(f"\n{RED}Invalid input{END}")
+                        input(f"\n{BLUE}Press Enter to continue...{END}")
+                    
+                    elif choice == '6':
+                        print(f"\n{YELLOW}Shutting down...{END}")
+                        self.cleanup()
+                        self.running = False
+                    
                     else:
-                        success, message = self.setup_hotspot()
-                        print(f"\n{GREEN if success else RED}{message}{END}")
+                        print(f"\n{RED}Invalid option. Please try again.{END}")
+                        time.sleep(1)
+                
+                except Exception as e:
+                    self.log_error(f"Error in main loop: {str(e)}")
+                    print(f"\n{RED}An error occurred. Check pi_controller.log for details.{END}")
                     time.sleep(2)
-                
-                elif choice == '2':
-                    success, message = self.toggle_monitor_mode(not self.monitor_mode_active)
-                    print(f"\n{GREEN if success else RED}{message}{END}")
-                    time.sleep(2)
-                
-                elif choice == '3':
-                    self.show_log()
-                
-                elif choice == '4':
-                    print(f"\n{YELLOW}Shutting down...{END}")
-                    self.cleanup()
-                    self.running = False
-                
-                else:
-                    print(f"\n{RED}Invalid option. Please try again.{END}")
-                    time.sleep(1)
         
         except Exception as e:
             logger.error(f"Critical error: {str(e)}")
