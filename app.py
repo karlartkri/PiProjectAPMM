@@ -13,6 +13,18 @@ import termios
 import traceback
 from datetime import datetime
 
+# ANSI Color Codes
+RED = '\033[91m'
+GREEN = '\033[92m'
+YELLOW = '\033[93m'
+BLUE = '\033[94m'
+MAGENTA = '\033[95m'
+CYAN = '\033[96m'
+WHITE = '\033[97m'
+BOLD = '\033[1m'
+UNDERLINE = '\033[4m'
+END = '\033[0m'
+
 # Configure logging with more detailed format
 logging.basicConfig(
     filename='pi_controller.log',
@@ -667,42 +679,49 @@ class PiController:
             return False, f"Error changing monitor mode: {str(e)}"
 
     def get_status(self):
-        """Get current status of all features"""
+        """Get current status of all features with colors"""
         return {
-            'hotspot': 'O' if self.hotspot_active else 'X',
-            'monitor': 'O' if self.monitor_mode_active else 'X'
+            'hotspot': f"{GREEN}O{END}" if self.hotspot_active else f"{RED}X{END}",
+            'monitor': f"{GREEN}O{END}" if self.monitor_mode_active else f"{RED}X{END}"
         }
 
     def display_menu(self):
-        """Display the main menu"""
+        """Display the main menu with colors"""
         status = self.get_status()
         os.system('clear')
-        print("\n=== Pi Zero W Controller ===")
-        print(f"Hotspot Status: [{status['hotspot']}]")
-        print(f"Monitor Mode: [{status['monitor']}]")
-        print("\nOptions:")
-        print("1. Toggle Hotspot")
-        print("2. Toggle Monitor Mode")
-        print("3. Show Log")
-        print("4. Exit")
-        print("\nSelect an option (1-4): ")
+        print(f"\n{BOLD}{CYAN}=== Pi Zero W Controller ==={END}")
+        print(f"{BOLD}Hotspot Status:{END} [{status['hotspot']}]")
+        print(f"{BOLD}Monitor Mode:{END} [{status['monitor']}]")
+        print(f"\n{WHITE}Options:{END}")
+        print(f"{YELLOW}1.{END} Toggle Hotspot")
+        print(f"{YELLOW}2.{END} Toggle Monitor Mode")
+        print(f"{YELLOW}3.{END} Show Log")
+        print(f"{YELLOW}4.{END} Exit")
+        print(f"\n{BLUE}Select an option (1-4):{END} ")
 
     def show_log(self):
-        """Display recent log entries"""
+        """Display recent log entries with colors"""
         try:
             if not os.path.exists('pi_controller.log'):
-                print("\nNo log file found.")
-                input("\nPress Enter to continue...")
+                print(f"\n{RED}No log file found.{END}")
+                input(f"\n{BLUE}Press Enter to continue...{END}")
                 return
 
             with open('pi_controller.log', 'r') as f:
-                print("\n=== Recent Log Entries ===")
+                print(f"\n{BOLD}{CYAN}=== Recent Log Entries ==={END}")
                 for line in f.readlines()[-10:]:
-                    print(line.strip())
-            input("\nPress Enter to continue...")
+                    if "ERROR" in line or "CRITICAL" in line:
+                        print(f"{RED}{line.strip()}{END}")
+                    elif "WARNING" in line:
+                        print(f"{YELLOW}{line.strip()}{END}")
+                    elif "INFO" in line:
+                        print(f"{GREEN}{line.strip()}{END}")
+                    else:
+                        print(f"{WHITE}{line.strip()}{END}")
+            input(f"\n{BLUE}Press Enter to continue...{END}")
         except Exception as e:
-            print(f"Error reading log: {str(e)}")
-            input("\nPress Enter to continue...")
+            print(f"{RED}Error reading log: {str(e)}{END}")
+            input(f"\n{BLUE}Press Enter to continue...{END}")
 
     def log_error(self, error_msg, exc_info=True):
         """Enhanced error logging with error tracking"""
@@ -796,7 +815,7 @@ class PiController:
             raise
 
     def run(self):
-        """Main application loop"""
+        """Main application loop with colored output"""
         try:
             self.check_root()
             while self.running:
@@ -806,30 +825,32 @@ class PiController:
                 if choice == '1':
                     if self.hotspot_active:
                         success, message = self.stop_hotspot()
+                        print(f"\n{GREEN if success else RED}{message}{END}")
                     else:
                         success, message = self.setup_hotspot()
-                    print(f"\n{message}")
+                        print(f"\n{GREEN if success else RED}{message}{END}")
                     time.sleep(2)
                 
                 elif choice == '2':
                     success, message = self.toggle_monitor_mode(not self.monitor_mode_active)
-                    print(f"\n{message}")
+                    print(f"\n{GREEN if success else RED}{message}{END}")
                     time.sleep(2)
                 
                 elif choice == '3':
                     self.show_log()
                 
                 elif choice == '4':
+                    print(f"\n{YELLOW}Shutting down...{END}")
                     self.cleanup()
                     self.running = False
                 
                 else:
-                    print("\nInvalid option. Please try again.")
+                    print(f"\n{RED}Invalid option. Please try again.{END}")
                     time.sleep(1)
         
         except Exception as e:
             logger.error(f"Critical error: {str(e)}")
-            print(f"\nCritical error occurred. Check pi_controller.log for details.")
+            print(f"\n{RED}Critical error occurred. Check pi_controller.log for details.{END}")
             self.cleanup()
             sys.exit(1)
 
